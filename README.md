@@ -4,6 +4,104 @@ An inference library for [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M)
 
 > **Kokoro** is an open-weight TTS model with 82 million parameters. Despite its lightweight architecture, it delivers comparable quality to larger models while being significantly faster and more cost-efficient. With Apache-licensed weights, Kokoro can be deployed anywhere from production environments to personal projects.
 
+## Peniel Kokoro service
+
+This repository is kept separate from the Peniel API so that Python, PyTorch, and the model weights do not become API dependencies. Follow the three sections below in order.
+
+### 1. Set up Kokoro from scratch
+
+Install the prerequisites:
+
+1. Install [Python 3.11](https://www.python.org/downloads/) or Python 3.12 and select **Add Python to PATH** during installation. Kokoro 0.9.4 does not support Python 3.13 or newer.
+2. Install [eSpeak NG](https://github.com/espeak-ng/espeak-ng/releases) and ensure its installation folder is on `PATH`.
+3. Close and reopen PowerShell, then confirm Python is available:
+
+```powershell
+python --version
+```
+
+Create an isolated environment and install the service dependencies:
+
+```powershell
+cd C:\Users\DELL\Documents\MyProject\personal\omeri\kokoro\peniel-service
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install --index-url https://download.pytorch.org/whl/cpu torch
+python -m pip install -r requirements.txt
+```
+
+If PowerShell blocks activation, run `Set-ExecutionPolicy -Scope Process Bypass` once in that window, then activate the environment again.
+
+### 2. Run Kokoro locally
+
+To verify that Kokoro itself can synthesize audio, run the bundled test from the repository root:
+
+```powershell
+cd C:\Users\DELL\Documents\MyProject\personal\omeri\kokoro
+.\peniel-service\.venv\Scripts\Activate.ps1
+python -m pip install -e . soundfile
+python test_kokoro.py
+```
+
+The first run downloads the model weights. Success creates `kokoro-test.wav` in this directory.
+
+### 3. Start Kokoro as the Peniel service
+
+The service exposes `GET /health` and `POST /v1/audio/speech`, which is the API contract Peniel uses.
+
+```powershell
+cd C:\Users\DELL\Documents\MyProject\personal\omeri\kokoro\peniel-service
+.\.venv\Scripts\Activate.ps1
+$env:KOKORO_SERVICE_API_KEY = "replace-with-a-long-random-secret"
+uvicorn main:app --host 0.0.0.0 --port 8000
+```
+
+Wait for the initial model download and model loading to complete. In another PowerShell window, verify it:
+
+```powershell
+Invoke-RestMethod http://localhost:8000/health
+```
+
+It should return `status: ok` and `modelLoaded: True`.
+
+Add the following to the Peniel API's `.env`, using the identical secret on both services:
+
+```env
+KOKORO_TTS_URL=http://127.0.0.1:8000
+KOKORO_TTS_API_KEY=replace-with-a-long-random-secret
+KOKORO_TTS_VOICE=am_michael
+```
+
+### Deploy the service to Render
+
+Commit and push this `kokoro` project to the Git repository connected to Render. Then create a **Web Service** with these settings:
+
+| Render setting | Value |
+| --- | --- |
+| Root Directory | `peniel-service` |
+| Runtime | Docker |
+| Dockerfile Path | `./Dockerfile` |
+| Health Check Path | `/health` |
+
+Add these environment variables in Render:
+
+```env
+KOKORO_SERVICE_API_KEY=a-long-random-production-secret
+# Optional: avoids Hugging Face Hub anonymous-download limits.
+HF_TOKEN=your-read-only-hugging-face-token
+```
+
+Do not set `PORT`; Render supplies it and the Dockerfile uses it automatically. After deployment, copy the Render service URL into the Peniel API deployment:
+
+```env
+KOKORO_TTS_URL=https://your-kokoro-service.onrender.com
+KOKORO_TTS_API_KEY=a-long-random-production-secret
+KOKORO_TTS_VOICE=am_michael
+```
+
+The Dockerfile has been checked for Render: it installs the native audio dependencies, CPU-only PyTorch, and starts Uvicorn on Render's provided port. The first deployment may take longer while the model is downloaded; use an instance with enough RAM for Python, PyTorch, and the model.
+
 ### Usage
 You can run this basic cell on [Google Colab](https://colab.research.google.com/). [Listen to samples](https://huggingface.co/hexgrad/Kokoro-82M/blob/main/SAMPLES.md).
 ```py
